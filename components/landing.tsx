@@ -11,6 +11,8 @@ import {
   Workflow,
   Truck,
   ShieldAlert,
+  Award,
+  HeartHandshake,
   ArrowLeft,
 } from "lucide-react"
 
@@ -21,12 +23,14 @@ const LEVEL_ICON = {
 } as const
 
 const DIM_ICON = {
-  dependency: Users,
+  people: Users,
   knowledge: BookLock,
   capacity: Gauge,
-  bottleneck: Workflow,
+  flow: Workflow,
   delivery: Truck,
   resilience: ShieldAlert,
+  rewards: Award,
+  culture: HeartHandshake,
 } as const
 
 export function Landing({ onStart }: { onStart: (level: LevelId) => void }) {

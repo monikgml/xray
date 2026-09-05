@@ -32,7 +32,7 @@ export default function Page() {
     setPhase("phone")
   }
 
-  async function handlePhoneSubmit(phone: string) {
+  async function handlePhoneSubmit(phone: string, code: string) {
     setIsSubmitting(true)
     setApiError(null)
 
@@ -40,7 +40,7 @@ export default function Page() {
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, level, answers }),
+        body: JSON.stringify({ phone, code, level, answers }),
       })
 
       const data = await res.json()

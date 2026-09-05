@@ -2,16 +2,42 @@ import { NextResponse } from "next/server"
 import { isValidPhoneNumber, formatPhoneForStorage } from "@/lib/phone"
 import { buildReport } from "@/lib/scoring"
 import { saveSubmission, getAllSubmissions } from "@/lib/db"
+import { validateVerificationCode, markPhoneConfirmed } from "@/lib/otp"
 import type { LevelId } from "@/lib/questions"
 
 export async function POST(request: Request) {
+  let body: { phone?: string; code?: string; level?: string; answers?: Record<string, number> } | null = null
   try {
-    const body = await request.json()
-    const { phone, level, answers } = body
+    body = await request.json()
+  } catch {
+    return NextResponse.json(
+      { error: "داده‌های ارسالی نامعتبر است." },
+      { status: 400 }
+    )
+  }
+
+  try {
+    const { phone, code, level, answers } = body || {}
 
     if (!phone || typeof phone !== "string" || !isValidPhoneNumber(phone)) {
       return NextResponse.json(
         { error: "شماره همراه وارد شده معتبر نیست. فرمت صحیح: ۰۹۱۲۳۴۵۶۷۸۹" },
+        { status: 400 }
+      )
+    }
+
+    if (!code || typeof code !== "string") {
+      return NextResponse.json(
+        { error: "لطفاً کد تایید پیامک‌شده را وارد کنید." },
+        { status: 400 }
+      )
+    }
+
+    // Validate the OTP code
+    const otpValidation = validateVerificationCode(phone, code)
+    if (!otpValidation.valid) {
+      return NextResponse.json(
+        { error: otpValidation.message || "کد تایید وارد شده نامعتبر یا منقضی است." },
         { status: 400 }
       )
     }
@@ -35,6 +61,9 @@ export async function POST(request: Request) {
       report,
     })
 
+    // Remove active OTP session once successfully submitted
+    markPhoneConfirmed(phone)
+
     return NextResponse.json({
       success: true,
       id: saved.id,
@@ -50,8 +79,20 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const adminKey = process.env.ADMIN_ACCESS_KEY || "admin123"
+    const authHeader = request.headers.get("x-admin-key")
+    const { searchParams } = new URL(request.url)
+    const queryKey = searchParams.get("key")
+
+    if (authHeader !== adminKey && queryKey !== adminKey) {
+      return NextResponse.json(
+        { error: "دسترسی غیرمجاز. کلید امنیتی مدیریت نامعتبر است." },
+        { status: 401 }
+      )
+    }
+
     const submissions = getAllSubmissions()
     return NextResponse.json({ success: true, submissions })
   } catch (err: unknown) {

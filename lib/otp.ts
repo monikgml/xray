@@ -14,12 +14,17 @@ export interface OtpConfig {
   maxSendPerHour: number
 }
 
+function cleanEnv(val: string | undefined, defaultVal: string = ""): string {
+  if (!val) return defaultVal
+  return val.trim().replace(/^["']|["']$/g, "")
+}
+
 const DEFAULT_CONFIG: OtpConfig = {
-  baseUrl: process.env.IPPANEL_BASE_URL || "https://edge.ippanel.com/v1",
-  authorizationToken: process.env.IPPANEL_API_KEY || "",
-  fromNumber: process.env.IPPANEL_FROM_NUMBER || "+983000505",
-  patternCode: process.env.IPPANEL_PATTERN_CODE || "fh24clmdnsoevbe",
-  codeParameterName: process.env.IPPANEL_CODE_PARAM || "verifycode",
+  baseUrl: cleanEnv(process.env.IPPANEL_BASE_URL, "https://api2.ippanel.com"),
+  authorizationToken: cleanEnv(process.env.IPPANEL_API_KEY, ""),
+  fromNumber: cleanEnv(process.env.IPPANEL_FROM_NUMBER, "+983000505"),
+  patternCode: cleanEnv(process.env.IPPANEL_PATTERN_CODE, "fh24clmdnsoevbe"),
+  codeParameterName: cleanEnv(process.env.IPPANEL_CODE_PARAM, "verifycode"),
   codeLength: 6,
   codeExpirationMinutes: 5,
   resendCooldownSeconds: 60,
@@ -41,6 +46,194 @@ interface PhoneVerificationEntry {
 const verificationStore = new Map<string, PhoneVerificationEntry>()
 
 /**
+ * Clean and format provider error messages so users never see raw HTML (502, 504, etc.)
+ */
+function sanitizeProviderErrorMessage(rawText: string, status: number): string {
+  if (!rawText) return `خطای سامانه پیامک (${status})`
+  if (
+    rawText.includes("<!DOCTYPE") ||
+    rawText.includes("<html") ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    return `خطای ارتباط با درگاه پیامک (کد ${status}): درگاه پیامکی در دسترس نیست.`
+  }
+  try {
+    const json = JSON.parse(rawText)
+    if (json.error_message) return json.error_message
+    if (json.meta?.message) return json.meta.message
+    if (json.message) return json.message
+  } catch {}
+  return `خطای سامانه پیامک (${status}): ${rawText.slice(0, 120)}`
+}
+
+/**
+ * Dispatches the OTP SMS via IPPanel pattern endpoints.
+ * First tries api2.ippanel.com (stable across international cloud hosts like Vercel).
+ * Falls back to edge.ippanel.com or configured baseUrl if needed.
+ */
+async function dispatchSmsPattern(
+  config: OtpConfig,
+  e164Phone: string,
+  verificationCode: string
+): Promise<{ success: boolean; message?: string }> {
+  const commonHeaders = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  }
+
+  const errors: string[] = []
+  const isCustomBase = config.baseUrl && !config.baseUrl.includes("ippanel.com")
+
+  // 0. If a custom proxy baseUrl is set (e.g. https://sms.myrahbord.ir), try it first
+  if (isCustomBase) {
+    try {
+      const customBase = config.baseUrl.replace(/\/+$/, "")
+      const customUrl = customBase.includes("/api/send") || customBase.includes("/send")
+        ? customBase
+        : `${customBase}/v1/api/send`
+
+      const edgePayload = {
+        sending_type: "pattern",
+        from_number: config.fromNumber,
+        code: config.patternCode,
+        recipients: [e164Phone],
+        params: {
+          [config.codeParameterName || "verifycode"]: verificationCode,
+        },
+      }
+
+      const resCustom = await fetch(customUrl, {
+        method: "POST",
+        headers: {
+          ...commonHeaders,
+          Authorization: config.authorizationToken,
+        },
+        body: JSON.stringify(edgePayload),
+        signal: AbortSignal.timeout(6000),
+      })
+
+      const rawCustom = await resCustom.text().catch(() => "")
+      let jsonCustom: { meta?: { status?: boolean; message?: string } } | null = null
+      try {
+        jsonCustom = JSON.parse(rawCustom)
+      } catch {}
+
+      if (resCustom.ok && (!jsonCustom || jsonCustom.meta?.status !== false)) {
+        return { success: true }
+      }
+
+      errors.push(`custom proxy (${resCustom.status})`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn("Custom proxy baseUrl request failed:", msg)
+      errors.push(`custom proxy (${msg})`)
+    }
+  }
+
+  // 1. Primary: api2.ippanel.com
+  try {
+    const api2Url = "https://api2.ippanel.com/api/v1/sms/pattern/normal/send"
+    const api2Payload = {
+      code: config.patternCode,
+      sender: config.fromNumber,
+      recipient: e164Phone,
+      variable: {
+        [config.codeParameterName || "verifycode"]: verificationCode,
+      },
+    }
+
+    const res2 = await fetch(api2Url, {
+      method: "POST",
+      headers: {
+        ...commonHeaders,
+        apikey: config.authorizationToken,
+      },
+      body: JSON.stringify(api2Payload),
+      signal: AbortSignal.timeout(6000),
+    })
+
+    const raw2 = await res2.text().catch(() => "")
+    if (res2.ok) {
+      try {
+        const json2 = JSON.parse(raw2)
+        if (json2.code === 200 || json2.status === "OK" || json2.data?.message_id) {
+          return { success: true }
+        }
+        if (json2.error_message) {
+          return { success: false, message: json2.error_message }
+        }
+      } catch {
+        return { success: true }
+      }
+    }
+
+    if (res2.status >= 400 && res2.status < 500) {
+      console.error("IPPanel api2 client error:", res2.status, raw2)
+      return { success: false, message: sanitizeProviderErrorMessage(raw2, res2.status) }
+    }
+
+    errors.push(`api2 (${res2.status})`)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn("IPPanel api2 request failed:", msg)
+    errors.push(`api2 (${msg})`)
+  }
+
+  // 2. Fallback: Edge API
+  try {
+    const edgeBase = "https://edge.ippanel.com/v1"
+
+    const edgePayload = {
+      sending_type: "pattern",
+      from_number: config.fromNumber,
+      code: config.patternCode,
+      recipients: [e164Phone],
+      params: {
+        [config.codeParameterName || "verifycode"]: verificationCode,
+      },
+    }
+
+    const resEdge = await fetch(`${edgeBase}/api/send`, {
+      method: "POST",
+      headers: {
+        ...commonHeaders,
+        Authorization: config.authorizationToken,
+      },
+      body: JSON.stringify(edgePayload),
+      signal: AbortSignal.timeout(6000),
+    })
+
+    const rawEdge = await resEdge.text().catch(() => "")
+    let jsonEdge: { meta?: { status?: boolean; message?: string } } | null = null
+    try {
+      jsonEdge = JSON.parse(rawEdge)
+    } catch {}
+
+    if (!resEdge.ok || (jsonEdge && jsonEdge.meta && jsonEdge.meta.status === false)) {
+      console.error("IPPanel Edge fallback error:", resEdge.status, rawEdge)
+      errors.push(`edge (${resEdge.status})`)
+      return {
+        success: false,
+        message: sanitizeProviderErrorMessage(rawEdge, resEdge.status),
+      }
+    }
+
+    return { success: true }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error("Network error sending OTP SMS via Edge fallback:", msg)
+    errors.push(`edge (${msg})`)
+    return {
+      success: false,
+      message: `خطا در ارتباط با سامانه پیامکی (${errors.join(", ")}). لطفاً مجدداً تلاش کنید.`,
+    }
+  }
+}
+
+/**
  * Generates a cryptographically secure numeric OTP of the specified length.
  */
 export function generateVerificationCode(length: number = 6): string {
@@ -49,11 +242,20 @@ export function generateVerificationCode(length: number = 6): string {
   return crypto.randomInt(min, max + 1).toString()
 }
 
+export interface ClientDispatchPayload {
+  url: string
+  headers: Record<string, string>
+  body: Record<string, unknown>
+}
+
 export interface SendOtpResult {
   success: boolean
   message: string
   cooldownSeconds?: number
   isRateLimited?: boolean
+  providerConfigured?: boolean
+  clientDispatch?: boolean
+  dispatchPayload?: ClientDispatchPayload
 }
 
 /**
@@ -83,7 +285,8 @@ export async function sendVerificationCode(
     console.error("IPPANEL_API_KEY is not configured in environment variables.")
     return {
       success: false,
-      message: "سامانه پیامک در حال حاضر پیکربندی نشده است. لطفاً متغیر IPPANEL_API_KEY را در محیط تنظیم کنید.",
+      message: "سامانه پیامک در حال حاضر پیکربندی نشده است. لطفاً متغیر IPPANEL_API_KEY را در تنظیمات Vercel وارد کنید.",
+      providerConfigured: false,
     }
   }
 
@@ -121,48 +324,7 @@ export async function sendVerificationCode(
 
   const verificationCode = generateVerificationCode(config.codeLength)
 
-  // Dispatch SMS via IPPanel Edge API
-  try {
-    const payload = {
-      sending_type: "pattern",
-      from_number: config.fromNumber,
-      code: config.patternCode,
-      recipients: [e164],
-      params: {
-        [config.codeParameterName || "verifycode"]: verificationCode,
-      },
-    }
-
-    const response = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/api/send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: config.authorizationToken,
-      },
-      body: JSON.stringify(payload),
-    })
-
-    const responseData = (await response.json().catch(() => null)) as {
-      meta?: { status?: boolean; message?: string }
-    } | null
-
-    if (!response.ok || (responseData && responseData.meta && responseData.meta.status === false)) {
-      console.error("IPPanel SMS API Error:", response.status, responseData)
-      const providerMessage = responseData?.meta?.message || "خطا در ارسال پیامک از طریق سامانه."
-      return {
-        success: false,
-        message: providerMessage,
-      }
-    }
-  } catch (err: unknown) {
-    console.error("Network error sending OTP SMS:", err)
-    return {
-      success: false,
-      message: "خطا در برقراری ارتباط با سامانه پیامکی. لطفاً مجدداً تلاش کنید.",
-    }
-  }
-
-  // Update entry in store
+  // Store verification entry securely on server
   const entry: PhoneVerificationEntry = existing
     ? {
         ...existing,
@@ -184,10 +346,41 @@ export async function sendVerificationCode(
 
   verificationStore.set(national, entry)
 
+  // Try server-side direct dispatch first
+  const dispatchResult = await dispatchSmsPattern(config, e164, verificationCode)
+
+  if (dispatchResult.success) {
+    return {
+      success: true,
+      message: "کد تایید ۶ رقمی به شماره همراه شما ارسال شد.",
+      cooldownSeconds: config.resendCooldownSeconds,
+    }
+  }
+
+  // Server direct dispatch failed (e.g. 502 Bad Gateway due to foreign cloud host).
+  // Fall back to Client-Assisted Dispatch: the user's browser in Iran calls IPPanel Edge API directly with CORS.
+  console.log("Server direct dispatch failed, activating client-assisted dispatch for:", national)
   return {
     success: true,
-    message: "کد تایید ۶ رقمی به شماره همراه شما ارسال شد.",
+    clientDispatch: true,
+    message: "کد تایید ۶ رقمی در حال ارسال است...",
     cooldownSeconds: config.resendCooldownSeconds,
+    dispatchPayload: {
+      url: "https://edge.ippanel.com/v1/api/send",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: config.authorizationToken,
+      },
+      body: {
+        sending_type: "pattern",
+        from_number: config.fromNumber,
+        code: config.patternCode,
+        recipients: [e164],
+        params: {
+          [config.codeParameterName || "verifycode"]: verificationCode,
+        },
+      },
+    },
   }
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useRef, useEffect } from "react"
 import {
   ANSWER_OPTIONS,
   DIMENSIONS,
@@ -21,33 +21,91 @@ export function Questionnaire({
   onExit: () => void
 }) {
   const questions = useMemo(() => getQuestionsForLevel(level), [level])
-  const levelMeta = LEVELS.find((l) => l.id === level)!
+  const levelMeta = LEVELS.find((l) => l.id === level) || LEVELS[0]
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, number>>({})
 
-  const current = questions[index]
-  const dim = DIMENSIONS.find((d) => d.id === current.dimension)!
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const isCompletedRef = useRef(false)
+  const indexRef = useRef(index)
+  indexRef.current = index
+
+  // Cleanup pending timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  }, [])
+
   const total = questions.length
+  const safeIndex = Math.min(Math.max(0, index), Math.max(0, total - 1))
+  const current = questions[safeIndex]
+  const dim = current ? DIMENSIONS.find((d) => d.id === current.dimension) || DIMENSIONS[0] : null
   const answeredCount = Object.keys(answers).length
-  const progress = Math.round((answeredCount / total) * 100)
-  const selected = answers[current.id]
+  const progress = total > 0 ? Math.round((answeredCount / total) * 100) : 0
+  const selected = current ? answers[current.id] : undefined
 
   function choose(value: number) {
+    if (isCompletedRef.current) return
+    if (!current) return
+
+    // Debounce: clear any pending timer so rapid clicks don't queue multiple skips
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+
     const next = { ...answers, [current.id]: value }
     setAnswers(next)
+
     // auto-advance shortly after selecting
-    window.setTimeout(() => {
-      if (index < total - 1) {
-        setIndex((i) => i + 1)
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
+      if (indexRef.current < total - 1) {
+        setIndex((i) => Math.min(total - 1, i + 1))
       } else {
-        onComplete(next)
+        if (!isCompletedRef.current) {
+          isCompletedRef.current = true
+          onComplete(next)
+        }
       }
     }, 220)
   }
 
   function goNext() {
-    if (index < total - 1) setIndex((i) => i + 1)
-    else onComplete(answers)
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    if (index < total - 1) {
+      setIndex((i) => Math.min(total - 1, i + 1))
+    } else if (!isCompletedRef.current) {
+      isCompletedRef.current = true
+      onComplete(answers)
+    }
+  }
+
+  function goPrev() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    setIndex((i) => Math.max(0, i - 1))
+  }
+
+  function handleExit() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    onExit()
+  }
+
+  if (!current || !dim) {
+    return null
   }
 
   return (
@@ -56,7 +114,7 @@ export function Questionnaire({
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={onExit}
+          onClick={handleExit}
           className="text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           انصراف
@@ -135,7 +193,7 @@ export function Questionnaire({
       <div className="mt-8 flex items-center justify-between">
         <button
           type="button"
-          onClick={() => setIndex((i) => Math.max(0, i - 1))}
+          onClick={goPrev}
           disabled={index === 0}
           className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
         >

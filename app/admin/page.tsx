@@ -20,6 +20,8 @@ import {
   BarChart3,
   FileSpreadsheet,
   CheckCircle2,
+  Smartphone,
+  Send,
 } from "lucide-react"
 
 interface Submission {
@@ -75,6 +77,33 @@ export default function AdminPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedLevel, setSelectedLevel] = useState<string>("all")
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null)
+
+  // SMS Diagnostic Tool
+  const [testPhone, setTestPhone] = useState("09128487408")
+  const [isTestingSms, setIsTestingSms] = useState(false)
+  const [smsTestResult, setSmsTestResult] = useState<Record<string, unknown> | null>(null)
+  const [showSmsTool, setShowSmsTool] = useState(false)
+
+  async function runSmsDiagnostic() {
+    setIsTestingSms(true)
+    setSmsTestResult(null)
+    try {
+      const res = await fetch("/api/admin/test-sms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({ phone: testPhone }),
+      })
+      const data = await res.json()
+      setSmsTestResult(data)
+    } catch (err: unknown) {
+      setSmsTestResult({ success: false, error: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setIsTestingSms(false)
+    }
+  }
 
   // Check saved session
   useEffect(() => {
@@ -255,6 +284,18 @@ export default function AdminPage() {
 
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setShowSmsTool(!showSmsTool)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                showSmsTool
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-card text-foreground hover:bg-accent"
+              }`}
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+              <span>تست ارتباط پیامک (IPPanel)</span>
+            </button>
+
+            <button
               onClick={() => void fetchSubmissions(adminKey)}
               disabled={isLoading}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent disabled:opacity-50"
@@ -284,6 +325,68 @@ export default function AdminPage() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+        {/* SMS Diagnostic Tool Panel */}
+        {showSmsTool && (
+          <div className="mb-6 rounded-2xl border border-primary/20 bg-card p-5 shadow-md">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Smartphone className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-foreground">بررسی و پینگ ارتباط سرور ورسل (Vercel) با درگاه پیامک IPPanel</h2>
+                  <p className="text-xs text-muted-foreground">تست وضعیت دسترسی سرور ورسل به دامنه‌های api2 و edge و بررسی کلید دسترسی</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSmsTool(false)}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                بستن
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <input
+                type="tel"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+                placeholder="شماره همراه برای تست (۰۹۱۲۳۴۵۶۷۸۹)"
+                className="w-full max-w-xs rounded-xl border border-border bg-background px-4 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
+                dir="ltr"
+              />
+              <button
+                type="button"
+                onClick={runSmsDiagnostic}
+                disabled={isTestingSms}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {isTestingSms ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    در حال پینگ و تست...
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-3.5 w-3.5" />
+                    ارسال تست و بررسی اتصال
+                  </>
+                )}
+              </button>
+            </div>
+
+            {smsTestResult && (
+              <div className="mt-4 rounded-xl border border-border bg-muted/40 p-4 text-xs font-mono" dir="ltr">
+                <div className="font-bold text-foreground mb-2">نتیجه تست سرور ورسل:</div>
+                <pre className="overflow-x-auto whitespace-pre-wrap text-[11px] text-foreground">
+                  {JSON.stringify(smsTestResult, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Metric Cards */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">

@@ -26,7 +26,13 @@ export async function POST(request: Request) {
     const result = await sendVerificationCode(phone)
 
     if (!result.success) {
-      const statusCode = result.isRateLimited ? 429 : 400
+      let statusCode = 400
+      if (result.providerConfigured === false) {
+        statusCode = 503
+      } else if (result.isRateLimited) {
+        statusCode = 429
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -41,6 +47,8 @@ export async function POST(request: Request) {
       success: true,
       message: result.message,
       cooldownSeconds: result.cooldownSeconds,
+      clientDispatch: result.clientDispatch,
+      dispatchPayload: result.dispatchPayload,
     })
   } catch (err: unknown) {
     console.error("Error in /api/otp/send:", err)

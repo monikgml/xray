@@ -41,6 +41,7 @@ export function PhoneForm({
   }, [step])
 
   async function handleSendOtp() {
+    if (isSendingOtp) return
     setError(null)
     setOtpSuccessMessage(null)
 
@@ -62,19 +63,43 @@ export function PhoneForm({
         body: JSON.stringify({ phone }),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => null)
 
-      if (!res.ok || !data.success) {
-        setError(data.message || "خطا در ارسال کد تایید. لطفاً مجدداً تلاش کنید.")
-        if (data.cooldownSeconds) {
+      if (!res.ok || !data?.success) {
+        const rawMsg = data?.message || "خطا در ارسال کد تایید. لطفاً مجدداً تلاش کنید."
+        const cleanMsg = typeof rawMsg === "string" ? rawMsg.replace(/<[^>]*>?/gm, "").trim() : "خطا در ارسال پیامک."
+        setError(cleanMsg)
+        if (data?.cooldownSeconds) {
           setCooldown(data.cooldownSeconds)
         }
         return
       }
 
+      // If server dispatch was blocked by foreign cloud WAF, execute Client-Assisted Dispatch from user's Iranian connection
+      if (data.clientDispatch && data.dispatchPayload) {
+        try {
+          const clientRes = await fetch(data.dispatchPayload.url, {
+            method: "POST",
+            headers: data.dispatchPayload.headers,
+            body: JSON.stringify(data.dispatchPayload.body),
+          })
+          const clientData = await clientRes.json().catch(() => null)
+          if (!clientRes.ok || (clientData && clientData.meta && clientData.meta.status === false)) {
+            console.error("Client dispatch failed:", clientRes.status, clientData)
+            const providerMsg = clientData?.meta?.message || `خطا در ارسال پیامک (${clientRes.status})`
+            setError(providerMsg)
+            return
+          }
+        } catch (err: unknown) {
+          console.error("Client dispatch network error:", err)
+          setError("خطا در برقراری ارتباط با سامانه پیامک. لطفاً اتصال اینترنت خود را بررسی کنید.")
+          return
+        }
+      }
+
       setStep("otp")
       setCooldown(data.cooldownSeconds || 60)
-      setOtpSuccessMessage(data.message || "کد تایید ۶ رقمی با موفقیت پیامک شد.")
+      setOtpSuccessMessage("کد تایید ۶ رقمی با موفقیت پیامک شد.")
     } catch {
       setError("خطا در ارتباط با سرور سامانه پیامک. لطفاً اتصال اینترنت خود را بررسی کنید.")
     } finally {

@@ -42,16 +42,47 @@ export function isValidPhoneNumber(phone: string): boolean {
  * e.g., converts "+989123456789" or "۰۹۱۲۳۴۵۶۷۸۹" to "09123456789".
  */
 export function formatPhoneForStorage(phone: string): string {
-  const normalized = normalizeDigits(phone.trim())
-  let cleaned = normalized.replace(/[\s\-\.\(\)]/g, "")
+  return normalizeToNationalFormat(phone)
+}
 
-  if (cleaned.startsWith("+98")) {
-    cleaned = "0" + cleaned.slice(3)
-  } else if (cleaned.startsWith("0098")) {
-    cleaned = "0" + cleaned.slice(4)
-  } else if (cleaned.length === 10 && cleaned.startsWith("9")) {
-    cleaned = "0" + cleaned
+/**
+ * Normalizes an Iranian mobile phone number to national format (e.g. 09123456789).
+ * Matches PhoneNumberNormalizer in tskmgr.
+ */
+export function normalizeToNationalFormat(rawPhoneNumber: string): string {
+  if (!rawPhoneNumber || typeof rawPhoneNumber !== "string") {
+    return ""
   }
 
-  return cleaned
+  const digitsOnly = normalizeDigits(rawPhoneNumber.trim()).replace(/\D/g, "")
+  if (!digitsOnly) return ""
+
+  let numeric = digitsOnly
+  if (numeric.startsWith("0098")) {
+    numeric = numeric.slice(4)
+  } else if (numeric.startsWith("098")) {
+    numeric = numeric.slice(3)
+  } else if (numeric.startsWith("98") && numeric.length === 12) {
+    numeric = numeric.slice(2)
+  }
+
+  if (numeric.startsWith("0")) {
+    numeric = numeric.replace(/^0+/, "")
+  }
+
+  if (!numeric.startsWith("9") || numeric.length !== 10) {
+    return ""
+  }
+
+  return "0" + numeric
+}
+
+/**
+ * Normalizes an Iranian mobile phone number to E.164 format (+989123456789) for SMS gateway.
+ * Matches PhoneNumberNormalizer in tskmgr.
+ */
+export function normalizeToE164(rawPhoneNumber: string): string | null {
+  const national = normalizeToNationalFormat(rawPhoneNumber)
+  if (!national) return null
+  return "+98" + national.slice(1)
 }

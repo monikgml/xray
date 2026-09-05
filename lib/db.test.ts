@@ -12,7 +12,7 @@ test("db module saves and retrieves submissions", async () => {
   process.env.DATABASE_PATH = tempDbPath
 
   // dynamically import db module to use process.env.DATABASE_PATH
-  const { saveSubmission, getAllSubmissions } = await import("./db")
+  const { saveSubmission, getAllSubmissions, closeDb } = await import("./db")
 
   const submission = {
     phone: "09123456789",
@@ -34,6 +34,9 @@ test("db module saves and retrieves submissions", async () => {
   assert.strictEqual(all[0].overall, 85)
   assert.strictEqual(all[0].band, "healthy")
   assert.deepStrictEqual(all[0].answers, { peo1: 100, kno1: 75 })
+
+  // Close db connection before unlinking on Windows
+  closeDb()
 
   // Cleanup temp database file
   if (fs.existsSync(tempDbPath)) {

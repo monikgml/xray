@@ -1,4 +1,4 @@
-import Database from "better-sqlite3"
+import { DatabaseSync } from "node:sqlite"
 import path from "path"
 
 export type SubmissionRecord = {
@@ -14,18 +14,25 @@ export type SubmissionRecord = {
 
 const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), "db.sqlite")
 
-let dbInstance: InstanceType<typeof Database> | null = null
+let dbInstance: DatabaseSync | null = null
 
-export function getDb(): InstanceType<typeof Database> {
+export function getDb(): DatabaseSync {
   if (!dbInstance) {
-    dbInstance = new Database(dbPath)
-    dbInstance.pragma("journal_mode = WAL")
+    dbInstance = new DatabaseSync(dbPath)
+    dbInstance.exec("PRAGMA journal_mode = WAL;")
     initDb(dbInstance)
   }
   return dbInstance
 }
 
-function initDb(db: InstanceType<typeof Database>) {
+export function closeDb(): void {
+  if (dbInstance) {
+    dbInstance.close()
+    dbInstance = null
+  }
+}
+
+function initDb(db: DatabaseSync) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS submissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

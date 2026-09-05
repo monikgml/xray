@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       env: {
         apiKeyConfigured: !!rawApiKey,
         apiKeyMasked: maskedKey,
-        baseUrlConfigured: baseUrl || "پیش‌فرض",
+        baseUrlConfigured: baseUrl || "پیش‌فرض (https://edge.ippanel.com/v1)",
         patternCode,
         fromNumber,
         codeParam,

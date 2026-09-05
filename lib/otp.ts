@@ -20,7 +20,7 @@ function cleanEnv(val: string | undefined, defaultVal: string = ""): string {
 }
 
 const DEFAULT_CONFIG: OtpConfig = {
-  baseUrl: cleanEnv(process.env.IPPANEL_BASE_URL, "https://api2.ippanel.com"),
+  baseUrl: cleanEnv(process.env.IPPANEL_BASE_URL, "https://edge.ippanel.com/v1"),
   authorizationToken: cleanEnv(process.env.IPPANEL_API_KEY, ""),
   fromNumber: cleanEnv(process.env.IPPANEL_FROM_NUMBER, "+983000505"),
   patternCode: cleanEnv(process.env.IPPANEL_PATTERN_CODE, "fh24clmdnsoevbe"),

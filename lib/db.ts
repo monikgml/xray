@@ -12,7 +12,9 @@ export type SubmissionRecord = {
   created_at?: string
 }
 
-const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), "db.sqlite")
+const dbPath =
+  process.env.DATABASE_PATH ||
+  (process.env.VERCEL ? path.join("/tmp", "db.sqlite") : path.join(process.cwd(), "db.sqlite"))
 
 let dbInstance: DatabaseSync | null = null
 

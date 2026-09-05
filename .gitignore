@@ -15,3 +15,5 @@ node_modules
 out/
 .pnpm-store/
 .DS_Store
+*.sqlite*
+*.log

@@ -134,7 +134,7 @@ export function Landing({ onStart }: { onStart: (level: LevelId) => void }) {
       </section>
 
       <footer className="mt-16 text-center text-xs text-muted-foreground">
-        پاسخ‌ها فقط در همین مرورگر پردازش می‌شوند و جایی ذخیره نمی‌گردند.
+        پاسخ‌ها به همراه شماره همراه جهت دریافت گزارش در دیتابیس ذخیره می‌شوند.
       </footer>
     </div>
   )
